@@ -1,10 +1,15 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -41,8 +46,20 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	fileData, fileHeaders, err := r.FormFile("thumbnail")
-	mediaType := fileHeaders.Header.Get("Content-Type")
-	imageData, err := io.ReadAll(fileData)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Not a proper request", err)
+	}
+	defer fileData.Close()
+	mediaType, _, err := mime.ParseMediaType(fileHeaders.Header.Get("Content-Type"))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid content type.", err)
+		return
+	}
+	if mediaType != `image/png` && mediaType != `image/jpeg` {
+		respondWithError(w, http.StatusBadRequest, "Not a valid file format.", nil)
+		return
+	}
+
 	dbVideo, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't find video", err)
@@ -53,8 +70,32 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	encodedImageData := base64.StdEncoding.EncodeToString(imageData)
-	thumbnailURL := fmt.Sprintf("data:%s;base64,%s", mediaType, encodedImageData)
+	parts := strings.Split(mediaType, "/")
+	if len(parts) != 2 {
+		respondWithError(w, http.StatusBadRequest, "No extension provided", nil)
+		return
+	}
+	extension := parts[1]
+	key := make([]byte, 32)
+	rand.Read(key)
+	videoName := base64.RawURLEncoding.EncodeToString(key)
+	thumbnailFileName := fmt.Sprintf("%s.%s", videoName, extension)
+	thumbnailFilePath := filepath.Join(cfg.assetsRoot, thumbnailFileName)
+	newFile, err := os.Create(thumbnailFilePath)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not write to storage", err)
+		return
+	}
+	defer newFile.Close()
+	_, err = io.Copy(newFile, fileData)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Could not write to storage", err)
+		return
+	}
+
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, thumbnailFileName)
 	dbVideo.ThumbnailURL = &thumbnailURL
 	err = cfg.db.UpdateVideo(dbVideo)
 	if err != nil {
