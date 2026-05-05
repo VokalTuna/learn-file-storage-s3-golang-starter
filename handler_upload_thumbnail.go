@@ -40,6 +40,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
+		return
 	}
 	defer file.Close()
 	mediaType, _, err := mime.ParseMediaType(header.Header.Get("Content-Type"))
